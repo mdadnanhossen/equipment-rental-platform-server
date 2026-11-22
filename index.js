@@ -6,7 +6,9 @@ import "dotenv/config";
 import {
   connectToDatabase,
   getCollection,
+  pingDatabase,
 } from "./config/database.js";
+import { initializeAuth } from "./config/auth.js";
 
 import equipmentRoutes from "./routes/equipment.routes.js";
 import rentalRoutes from "./routes/rental.routes.js";
@@ -32,6 +34,43 @@ app.use(
   })
 );
 
+// Root route
+app.get("/", (req, res) => {
+  res.send("Rentora Server is Running!");
+});
+
+// Health check — verifies real database connectivity
+app.get("/health", async (req, res) => {
+  try {
+    await pingDatabase();
+
+    res.status(200).json({
+      success: true,
+      message: "Rentora API is running",
+      database: "Connected",
+    });
+  } catch (error) {
+    console.error("Health check failed:", error);
+
+    res.status(503).json({
+      success: false,
+      message: "Rentora API is running",
+      database: "Disconnected",
+      error: error.message,
+    });
+  }
+});
+
+// Ensure MongoDB and Better Auth are initialized before any route that
+// needs them (including the Stripe webhook below). On Vercel this also
+// replaces app.listen(): the first request triggers initialization and
+// every later request reuses the cached result.
+app.use((req, res, next) => {
+  initializeApp()
+    .then(() => next())
+    .catch((error) => next(error));
+});
+
 // Stripe Webhook MUST be before express.json()
 app.use(
   "/api/webhooks/stripe",
@@ -41,20 +80,6 @@ app.use(
 
 // JSON parser for all other routes
 app.use(express.json());
-
-// Root route
-app.get("/", (req, res) => {
-  res.send("Rentora Server is Running!");
-});
-
-// Health check
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Rentora API is running",
-    database: "Connected",
-  });
-});
 
 
 app.use("/api/equipment", equipmentRoutes);
@@ -110,38 +135,68 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Cached initialization: MongoDB + Better Auth + indexes, run once per
+// server instance. On failure the cache is cleared so the next request
+// retries instead of failing forever.
+let initializationPromise = null;
+
+function initializeApp() {
+  if (!initializationPromise) {
+    initializationPromise = (async () => {
+      await connectToDatabase();
+
+      console.log(
+        "Stripe webhook secret loaded:",
+        Boolean(process.env.STRIPE_WEBHOOK_SECRET)
+      );
+
+      // Initialize Better Auth after the database connection
+      await initializeAuth();
+
+      getCollection("user");
+      getCollection("equipment");
+      getCollection("rental");
+
+      const paymentCollection = getCollection("payment");
+
+      await paymentCollection.createIndex(
+        { stripeSessionId: 1 },
+        { unique: true }
+      );
+
+      getCollection("favorite");
+      getCollection("review");
+    })().catch((error) => {
+      initializationPromise = null;
+      throw error;
+    });
+  }
+
+  return initializationPromise;
+}
+
 // Start server
 async function startServer() {
   try {
-    await connectToDatabase();
-    console.log(
-  "Stripe webhook secret loaded:",
-  Boolean(process.env.STRIPE_WEBHOOK_SECRET)
-);
+    await initializeApp();
 
-    // Initialize Better Auth after database connection
-    await import("./config/auth.js");
-
-   getCollection("user");
-getCollection("equipment");
-getCollection("rental");
-
-const paymentCollection = getCollection("payment");
-
-await paymentCollection.createIndex(
-  { stripeSessionId: 1 },
-  { unique: true }
-);
-
-getCollection("favorite");
-getCollection("review");
+    // Vercel manages its own process — app.listen() must not run there
+    if (process.env.VERCEL) {
+      console.log("Vercel environment detected — app.listen() skipped.");
+      return;
+    }
 
     app.listen(port, () => {
       console.log(`Rentora server running on port ${port}`);
     });
   } catch (error) {
     console.error("Server startup failed:", error);
-    process.exit(1);
+
+    // Only exit outside Vercel: on Vercel the initialization middleware
+    // retries on the next request, so a cold-start failure is recoverable.
+    if (!process.env.VERCEL) {
+      process.exit(1);
+    }
   }
 }
 
