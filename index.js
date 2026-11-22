@@ -81,7 +81,6 @@ app.use("/api/users", userRoutes);
 
 app.use("/users", userRoutes);
 
-// Admin analytics + rentals + equipment management
 app.use("/api/admin", adminRoutes);
 
 // Owner analytics
