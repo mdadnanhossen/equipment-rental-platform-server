@@ -71,7 +71,7 @@ app.use("/api/owner/rentals", ownerRentalRoutes);
 
 app.use("/api/payments", paymentRoutes);
 
-// Favorites API (customer)
+
 app.use("/api/favorites", favoriteRoutes);
 
 // Profile API (any authenticated user)
