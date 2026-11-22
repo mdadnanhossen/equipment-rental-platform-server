@@ -59,7 +59,7 @@ app.get("/health", (req, res) => {
 
 app.use("/api/equipment", equipmentRoutes);
 
-// Rental API
+
 app.use("/api/rentals", rentalRoutes);
 
 // Admin Equipment API
