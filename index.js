@@ -78,7 +78,7 @@ app.use("/api/profile", profileRoutes);
 
 
 app.use("/api/users", userRoutes);
-// Legacy alias so older clients keep working
+
 app.use("/users", userRoutes);
 
 // Admin analytics + rentals + equipment management
