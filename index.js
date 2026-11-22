@@ -19,6 +19,7 @@ import profileRoutes from "./routes/profile.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import ownerRoutes from "./routes/owner.routes.js";
+import uploadsRoutes from "./routes/uploads.routes.js";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -86,6 +87,8 @@ app.use("/api/admin", adminRoutes);
 
 // Owner analytics
 app.use("/api/owner", ownerRoutes);
+
+app.use("/api/uploads", uploadsRoutes);
 
 // 404 handler (JSON, not HTML)
 app.use((req, res) => {
