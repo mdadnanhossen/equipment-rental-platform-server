@@ -68,7 +68,7 @@ app.use("/api/admin/equipment", adminEquipmentRoutes);
 
 app.use("/api/owner/rentals", ownerRentalRoutes);
 
-// Payment API
+
 app.use("/api/payments", paymentRoutes);
 
 // Favorites API (customer)
