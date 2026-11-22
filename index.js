@@ -56,7 +56,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Equipment API
+
 app.use("/api/equipment", equipmentRoutes);
 
 // Rental API
