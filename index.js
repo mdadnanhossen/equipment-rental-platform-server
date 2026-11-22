@@ -74,7 +74,6 @@ app.use("/api/payments", paymentRoutes);
 
 app.use("/api/favorites", favoriteRoutes);
 
-// Profile API (any authenticated user)
 app.use("/api/profile", profileRoutes);
 
 // User management API (admin)
