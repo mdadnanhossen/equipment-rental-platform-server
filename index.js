@@ -62,7 +62,7 @@ app.use("/api/equipment", equipmentRoutes);
 
 app.use("/api/rentals", rentalRoutes);
 
-// Admin Equipment API
+
 app.use("/api/admin/equipment", adminEquipmentRoutes);
 
 // Owner Rental API
