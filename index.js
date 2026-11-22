@@ -146,3 +146,5 @@ getCollection("review");
 }
 
 startServer();
+export default app
+
