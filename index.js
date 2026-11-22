@@ -76,7 +76,7 @@ app.use("/api/favorites", favoriteRoutes);
 
 app.use("/api/profile", profileRoutes);
 
-// User management API (admin)
+
 app.use("/api/users", userRoutes);
 // Legacy alias so older clients keep working
 app.use("/users", userRoutes);
