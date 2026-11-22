@@ -136,4 +136,104 @@ router.patch("/:id/reject", async (req, res) => {
   }
 });
 
+// PATCH: Mark an approved rental as started (active)
+router.patch("/:id/start", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid rental ID",
+      });
+    }
+
+    const rentalCollection = getCollection("rental");
+
+    const result = await rentalCollection.updateOne(
+      {
+        _id: new ObjectId(id),
+        ownerId: req.user.id,
+        status: "approved",
+      },
+      {
+        $set: {
+          status: "active",
+          startedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Approved rental not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Rental marked as active",
+    });
+  } catch (error) {
+    console.error("Rental start error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to start rental",
+    });
+  }
+});
+
+// PATCH: Mark an active rental as completed
+router.patch("/:id/complete", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid rental ID",
+      });
+    }
+
+    const rentalCollection = getCollection("rental");
+
+    const result = await rentalCollection.updateOne(
+      {
+        _id: new ObjectId(id),
+        ownerId: req.user.id,
+        status: "active",
+      },
+      {
+        $set: {
+          status: "completed",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Active rental not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Rental marked as completed",
+    });
+  } catch (error) {
+    console.error("Rental completion error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to complete rental",
+    });
+  }
+});
+
 export default router;

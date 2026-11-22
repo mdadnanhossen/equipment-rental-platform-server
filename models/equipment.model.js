@@ -52,44 +52,34 @@ export function validateEquipmentPayload(data) {
     errors.push("Invalid rental type");
   }
 
-  // Validate the selected rental price.
-  const priceFields = {
-    daily: "pricePerDay",
-    weekly: "pricePerWeek",
-    monthly: "pricePerMonth",
-  };
-
-  const selectedPriceField = priceFields[rentalType];
-
+  // The assignment specifies ONE rental price field. `rentalType` is a label
+  // (daily/weekly/monthly) and every listing is priced through `pricePerDay`,
+  // which is what rental totals and Stripe checkout are calculated from.
   if (
-    selectedPriceField &&
-    (
-      typeof data[selectedPriceField] !== "number" ||
-      !Number.isFinite(data[selectedPriceField]) ||
-      data[selectedPriceField] <= 0
-    )
+    typeof data.pricePerDay !== "number" ||
+    !Number.isFinite(data.pricePerDay) ||
+    data.pricePerDay <= 0
   ) {
-    errors.push(
-      `${selectedPriceField} must be a positive number`
-    );
+    errors.push("pricePerDay must be a positive number");
   }
 
-  // Validate optional prices when provided.
-  for (const field of [
-    "pricePerDay",
-    "pricePerWeek",
-    "pricePerMonth",
-  ]) {
-    if (
-      data[field] !== undefined &&
-      (
-        typeof data[field] !== "number" ||
-        !Number.isFinite(data[field]) ||
-        data[field] <= 0
-      )
-    ) {
-      errors.push(`${field} must be a positive number`);
-    }
+  // Available quantity of units (optional — defaults to 1).
+  if (
+    data.quantity !== undefined &&
+    (
+      !Number.isInteger(data.quantity) ||
+      data.quantity < 1
+    )
+  ) {
+    errors.push("quantity must be a whole number of 1 or more");
+  }
+
+  // Rental terms & conditions (optional free text).
+  if (
+    data.rentalTerms !== undefined &&
+    typeof data.rentalTerms !== "string"
+  ) {
+    errors.push("rentalTerms must be a string");
   }
 
   if (

@@ -132,22 +132,60 @@ router.patch("/:id", async (req, res) => {
 
     const rentalDays = (endDay - startDay) / 86400000;
 
-    const conflictingRental = await rentalCollection.findOne({
-      _id: { $ne: new ObjectId(id) },
-      equipmentId: rental.equipmentId,
-      status: { $in: ["pending", "approved", "active"] },
-      startDate: { $lt: new Date(endDay).toISOString() },
-      endDate: { $gt: new Date(startDay).toISOString() },
-    });
+    // Quantity-aware overlap check for the requested date range.
+    const requestedQuantity = Number.isInteger(rental.quantity)
+      ? rental.quantity
+      : 1;
 
-    if (conflictingRental) {
+    const overlapSummary = await rentalCollection
+      .aggregate([
+        {
+          $match: {
+            _id: { $ne: new ObjectId(id) },
+            equipmentId: rental.equipmentId,
+            status: { $in: ["pending", "approved", "active"] },
+            startDate: { $lt: new Date(endDay).toISOString() },
+            endDate: { $gt: new Date(startDay).toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            bookedQuantity: {
+              $sum: { $ifNull: ["$quantity", 1] },
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    const alreadyBooked = overlapSummary[0]?.bookedQuantity ?? 0;
+    const availableQuantity = Number.isInteger(equipment.quantity)
+      ? equipment.quantity
+      : 1;
+
+    if (alreadyBooked + requestedQuantity > availableQuantity) {
       return res.status(409).json({
         success: false,
-        message: "Equipment is already requested for these dates",
+        message:
+          "Not enough equipment quantity available for these dates",
       });
     }
 
-    const totalAmount = rentalDays * equipment.pricePerDay;
+    const pricePerDay = Number(
+      equipment.pricePerDay ??
+        equipment.pricePerWeek ??
+        equipment.pricePerMonth
+    );
+
+    if (!Number.isFinite(pricePerDay) || pricePerDay <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Equipment price is not configured",
+      });
+    }
+
+    const totalAmount = rentalDays * pricePerDay * requestedQuantity;
 
     await rentalCollection.updateOne(
       {
@@ -160,7 +198,7 @@ router.patch("/:id", async (req, res) => {
           startDate: new Date(startDay).toISOString(),
           endDate: new Date(endDay).toISOString(),
           rentalDays,
-          pricePerDay: equipment.pricePerDay,
+          pricePerDay,
           securityDeposit: equipment.securityDeposit || 0,
           totalAmount,
           updatedAt: new Date(),
@@ -245,8 +283,56 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const { equipmentId, startDate: startInput, endDate: endInput } =
-      req.body;
+    const {
+      equipmentId,
+      startDate: startInput,
+      endDate: endInput,
+      quantity: quantityInput,
+      contactNumber,
+      deliveryAddress,
+      notes,
+    } = req.body;
+
+    // Required quantity of units (defaults to 1).
+    const quantity =
+      quantityInput === undefined ? 1 : Number(quantityInput);
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be a whole number of 1 or more",
+      });
+    }
+
+    // Contact number is required so the owner can reach the customer.
+    if (
+      typeof contactNumber !== "string" ||
+      !contactNumber.trim()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Contact number is required",
+      });
+    }
+
+    const sanitizedContact = contactNumber.trim();
+
+    if (!/^[+\d][\d\s\-()]{6,19}$/.test(sanitizedContact)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid contact number",
+      });
+    }
+
+    const sanitizedDelivery =
+      typeof deliveryAddress === "string"
+        ? deliveryAddress.trim().slice(0, 300)
+        : "";
+
+    const sanitizedNotes =
+      typeof notes === "string"
+        ? notes.trim().slice(0, 1000)
+        : "";
 
     if (!ObjectId.isValid(equipmentId)) {
       return res.status(400).json({
@@ -313,22 +399,58 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // Check overlapping rental requests
-    const conflictingRental = await rentalCollection.findOne({
-      equipmentId: equipment._id.toString(),
-      status: { $in: ["pending", "approved", "active"] },
-      startDate: { $lt: endDate.toISOString() },
-      endDate: { $gt: startDate.toISOString() },
-    });
+    // Check overlapping bookings, summed by quantity so multiple units of
+    // the same equipment can be rented in the same period.
+    const overlapSummary = await rentalCollection
+      .aggregate([
+        {
+          $match: {
+            equipmentId: equipment._id.toString(),
+            status: { $in: ["pending", "approved", "active"] },
+            startDate: { $lt: endDate.toISOString() },
+            endDate: { $gt: startDate.toISOString() },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            bookedQuantity: {
+              $sum: { $ifNull: ["$quantity", 1] },
+            },
+          },
+        },
+      ])
+      .toArray();
 
-    if (conflictingRental) {
+    const alreadyBooked = overlapSummary[0]?.bookedQuantity ?? 0;
+    const availableQuantity = Number.isInteger(equipment.quantity)
+      ? equipment.quantity
+      : 1;
+
+    if (alreadyBooked + quantity > availableQuantity) {
       return res.status(409).json({
         success: false,
-        message: "Equipment is already booked for these dates",
+        message:
+          "Not enough equipment quantity available for these dates",
       });
     }
 
-    const totalAmount = equipment.pricePerDay * days;
+    // Single rental price (legacy listings may only carry a weekly/monthly
+    // price field — fall back so totals never become NaN).
+    const pricePerDay = Number(
+      equipment.pricePerDay ??
+        equipment.pricePerWeek ??
+        equipment.pricePerMonth
+    );
+
+    if (!Number.isFinite(pricePerDay) || pricePerDay <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Equipment price is not configured",
+      });
+    }
+
+    const totalAmount = pricePerDay * days * quantity;
 
     const rental = {
       equipmentId: equipment._id.toString(),
@@ -345,8 +467,13 @@ router.post("/", async (req, res) => {
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
 
+      quantity,
+      contactNumber: sanitizedContact,
+      deliveryAddress: sanitizedDelivery,
+      notes: sanitizedNotes,
+
       rentalDays: days,
-      pricePerDay: equipment.pricePerDay,
+      pricePerDay,
       securityDeposit: equipment.securityDeposit || 0,
       totalAmount,
 

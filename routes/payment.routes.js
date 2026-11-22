@@ -402,7 +402,12 @@ router.post(
         });
       }
 
-      const totalAmount = rentalDays * pricePerDay;
+      // Quantity of units booked (legacy rentals default to 1).
+      const rentalQuantity = Number.isInteger(rental.quantity)
+        ? rental.quantity
+        : 1;
+
+      const totalAmount = rentalDays * pricePerDay * rentalQuantity;
 
       if (
         !Number.isSafeInteger(totalAmount) ||

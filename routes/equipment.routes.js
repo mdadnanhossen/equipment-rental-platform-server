@@ -18,15 +18,37 @@ const router = express.Router();
 
 const RENTAL_TYPES = ["daily", "weekly", "monthly"];
 
-const PRICE_FIELDS = {
-  daily: "pricePerDay",
-  weekly: "pricePerWeek",
-  monthly: "pricePerMonth",
-};
-
 // Escape special regex characters in search input
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Every listing is priced through a single `pricePerDay` field (the
+ * assignment specifies one rental price input). `rentalType` is kept as the
+ * daily/weekly/monthly label. Legacy documents that only carry
+ * `pricePerWeek`/`pricePerMonth` are normalized here so totals never become
+ * NaN.
+ */
+function normalizePrice(item) {
+  if (Number.isFinite(item?.pricePerDay) && item.pricePerDay > 0) {
+    return item.pricePerDay;
+  }
+
+  const legacy = item?.pricePerWeek ?? item?.pricePerMonth;
+
+  return Number.isFinite(legacy) && legacy > 0 ? legacy : 0;
+}
+
+function withRentalDefaults(item) {
+  return {
+    ...item,
+    pricePerDay: normalizePrice(item),
+    rentalType: item.rentalType || "daily",
+    quantity: Number.isInteger(item?.quantity) ? item.quantity : 1,
+    rentalTerms: typeof item?.rentalTerms === "string" ? item.rentalTerms : "",
+    _id: item._id.toString(),
+  };
 }
 
 /**
@@ -59,21 +81,13 @@ router.post(
         model,
         rentalType = "daily",
         pricePerDay,
-        pricePerWeek,
-        pricePerMonth,
+        quantity,
+        rentalTerms,
         securityDeposit,
         condition,
         images,
         location,
       } = req.body;
-
-      const selectedPriceField = PRICE_FIELDS[rentalType];
-
-      const selectedPrice = {
-        pricePerDay,
-        pricePerWeek,
-        pricePerMonth,
-      }[selectedPriceField];
 
       const newEquipment = {
         title: title.trim(),
@@ -84,7 +98,11 @@ router.post(
         model: model?.trim() || "",
 
         rentalType,
-        [selectedPriceField]: selectedPrice,
+        // Single rental price for every rental type.
+        pricePerDay,
+
+        quantity: Number.isInteger(quantity) && quantity >= 1 ? quantity : 1,
+        rentalTerms: typeof rentalTerms === "string" ? rentalTerms.trim() : "",
 
         securityDeposit: securityDeposit ?? 0,
 
@@ -145,6 +163,9 @@ router.get("/", async (req, res) => {
     const {
       search,
       category,
+      location,
+      rentalType,
+      availability,
       minPrice,
       maxPrice,
       sortBy = "newest",
@@ -159,19 +180,28 @@ router.get("/", async (req, res) => {
       status: "approved",
     };
 
+    // Search and location filters are combined with $and so that a search
+    // term and a location filter can both apply at the same time.
+    const andClauses = [];
+
     if (search && typeof search === "string") {
       const searchRegex = new RegExp(
         escapeRegex(search.trim()),
         "i"
       );
 
-      filter.$or = [
-        { title: searchRegex },
-        { description: searchRegex },
-        { category: searchRegex },
-        { brand: searchRegex },
-        { model: searchRegex },
-      ];
+      // Name AND location search (assignment requires both).
+      andClauses.push({
+        $or: [
+          { title: searchRegex },
+          { description: searchRegex },
+          { category: searchRegex },
+          { brand: searchRegex },
+          { model: searchRegex },
+          { "location.city": searchRegex },
+          { "location.address": searchRegex },
+        ],
+      });
     }
 
     if (category && typeof category === "string") {
@@ -179,6 +209,49 @@ router.get("/", async (req, res) => {
         $regex: `^${escapeRegex(category.trim())}$`,
         $options: "i",
       };
+    }
+
+    // Location filter (city or address contains the value).
+    if (location && typeof location === "string" && location.trim()) {
+      const locationRegex = new RegExp(
+        escapeRegex(location.trim()),
+        "i"
+      );
+
+      andClauses.push({
+        $or: [
+          { "location.city": locationRegex },
+          { "location.address": locationRegex },
+        ],
+      });
+    }
+
+    if (andClauses.length > 0) {
+      filter.$and = andClauses;
+    }
+
+    // Rental type filter: daily | weekly | monthly.
+    if (rentalType && typeof rentalType === "string") {
+      if (!RENTAL_TYPES.includes(rentalType)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid rental type",
+        });
+      }
+
+      filter.rentalType = rentalType;
+    }
+
+    // Availability filter: available | unavailable.
+    if (availability && typeof availability === "string") {
+      if (!["available", "unavailable"].includes(availability)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid availability",
+        });
+      }
+
+      filter.availability = availability;
     }
 
     // Price filtering currently uses daily prices.
@@ -255,11 +328,7 @@ router.get("/", async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Equipment fetched successfully",
-      data: equipment.map((item) => ({
-        ...item,
-        rentalType: item.rentalType || "daily",
-        _id: item._id.toString(),
-      })),
+      data: equipment.map(withRentalDefaults),
       total,
       page: currentPage,
       totalPages: Math.ceil(total / pageLimit),
@@ -333,11 +402,7 @@ router.get(
       return res.status(200).json({
         success: true,
         message: "Your equipment fetched successfully",
-        data: equipment.map((item) => ({
-          ...item,
-          rentalType: item.rentalType || "daily",
-          _id: item._id.toString(),
-        })),
+        data: equipment.map(withRentalDefaults),
         total,
         page: currentPage,
         totalPages: Math.ceil(total / pageLimit),
@@ -397,8 +462,8 @@ router.patch(
         "model",
         "rentalType",
         "pricePerDay",
-        "pricePerWeek",
-        "pricePerMonth",
+        "quantity",
+        "rentalTerms",
         "securityDeposit",
         "condition",
         "images",
@@ -459,42 +524,48 @@ router.patch(
         validationErrors.push("Invalid rentalType");
       }
 
-      // Validate every supplied price.
-      for (const field of [
-        "pricePerDay",
-        "pricePerWeek",
-        "pricePerMonth",
-      ]) {
-        if (
-          updates[field] !== undefined &&
-          (
-            typeof updates[field] !== "number" ||
-            !Number.isFinite(updates[field]) ||
-            updates[field] <= 0
-          )
-        ) {
-          validationErrors.push(`Invalid ${field}`);
-        }
-      }
-
-      // The selected rental type must have a valid price.
-      const selectedPriceField = PRICE_FIELDS[rentalType];
-
-      const selectedPrice =
-        updates[selectedPriceField] ??
-        existingEquipment[selectedPriceField];
-
+      // Single rental price — always validated when supplied.
       if (
-        selectedPriceField &&
+        updates.pricePerDay !== undefined &&
         (
-          typeof selectedPrice !== "number" ||
-          !Number.isFinite(selectedPrice) ||
-          selectedPrice <= 0
+          typeof updates.pricePerDay !== "number" ||
+          !Number.isFinite(updates.pricePerDay) ||
+          updates.pricePerDay <= 0
         )
       ) {
+        validationErrors.push("Invalid pricePerDay");
+      }
+
+      // The listing must always resolve to a usable daily price.
+      const pricePerDay =
+        updates.pricePerDay ?? normalizePrice(existingEquipment);
+
+      if (
+        !Number.isFinite(pricePerDay) ||
+        pricePerDay <= 0
+      ) {
         validationErrors.push(
-          `${selectedPriceField} must be a positive number`
+          "pricePerDay must be a positive number"
         );
+      }
+
+      // Available quantity (optional, whole number >= 1).
+      if (
+        updates.quantity !== undefined &&
+        (
+          !Number.isInteger(updates.quantity) ||
+          updates.quantity < 1
+        )
+      ) {
+        validationErrors.push("Invalid quantity");
+      }
+
+      // Rental terms & conditions (optional free text).
+      if (
+        updates.rentalTerms !== undefined &&
+        typeof updates.rentalTerms !== "string"
+      ) {
+        validationErrors.push("Invalid rentalTerms");
       }
 
       // Security deposit validation
@@ -594,18 +665,23 @@ router.patch(
         }));
       }
 
-      // Always persist a rental type and its selected price.
-      updates.rentalType = rentalType;
-      updates[selectedPriceField] = selectedPrice;
+      // Track which fields the client actually sent before we add defaults,
+      // so "requires review" is not triggered by implicit normalization.
+      const suppliedFields = Object.keys(updates);
 
-      // Remove prices belonging to other rental types.
-      const unsetFields = {};
-
-      for (const field of Object.values(PRICE_FIELDS)) {
-        if (field !== selectedPriceField) {
-          unsetFields[field] = "";
-        }
+      if (typeof updates.rentalTerms === "string") {
+        updates.rentalTerms = updates.rentalTerms.trim();
       }
+
+      // Always persist a rental type and the single rental price.
+      updates.rentalType = rentalType;
+      updates.pricePerDay = pricePerDay;
+
+      // Drop legacy multi-price fields so only `pricePerDay` remains.
+      const unsetFields = {
+        pricePerWeek: "",
+        pricePerMonth: "",
+      };
 
       const updateData = {
         ...updates,
@@ -619,11 +695,9 @@ router.patch(
         "category",
         "rentalType",
         "pricePerDay",
-        "pricePerWeek",
-        "pricePerMonth",
         "images",
         "location",
-      ].some((field) => updates[field] !== undefined);
+      ].some((field) => suppliedFields.includes(field));
 
       const updateQuery = {
         $set: {
@@ -659,11 +733,7 @@ router.patch(
       return res.status(200).json({
         success: true,
         message: "Equipment updated successfully",
-        data: {
-          ...result,
-          rentalType: result.rentalType || "daily",
-          _id: result._id.toString(),
-        },
+        data: withRentalDefaults(result),
       });
     } catch (error) {
       console.error("Equipment update error:", error);
@@ -835,11 +905,7 @@ router.get(
       return res.status(200).json({
         success: true,
         message: "Equipment fetched successfully",
-        data: {
-          ...equipment,
-          rentalType: equipment.rentalType || "daily",
-          _id: equipment._id.toString(),
-        },
+        data: withRentalDefaults(equipment),
       });
     } catch (error) {
       console.error("Owner equipment details error:", error);
@@ -883,11 +949,7 @@ router.get("/:id", async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Equipment details fetched successfully",
-      data: {
-        ...equipment,
-        rentalType: equipment.rentalType || "daily",
-        _id: equipment._id.toString(),
-      },
+      data: withRentalDefaults(equipment),
     });
   } catch (error) {
     console.error("Equipment details error:", error);

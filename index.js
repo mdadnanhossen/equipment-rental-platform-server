@@ -8,17 +8,17 @@ import {
   getCollection,
 } from "./config/database.js";
 
-import {
-  verifyAuth,
-  requireRole,
-} from "./middleware/auth.middleware.js";
-
 import equipmentRoutes from "./routes/equipment.routes.js";
 import rentalRoutes from "./routes/rental.routes.js";
 import adminEquipmentRoutes from "./routes/admin-equipment.routes.js";
 import ownerRentalRoutes from "./routes/owner-rental.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import stripeWebhookRoutes from "./routes/stripe-webhook.routes.js";
+import favoriteRoutes from "./routes/favorite.routes.js";
+import profileRoutes from "./routes/profile.routes.js";
+import userRoutes from "./routes/user.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+import ownerRoutes from "./routes/owner.routes.js";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -70,40 +70,44 @@ app.use("/api/owner/rentals", ownerRentalRoutes);
 // Payment API
 app.use("/api/payments", paymentRoutes);
 
-// Get all users
-app.get(
-  "/users",
-  verifyAuth,
-  requireRole("admin"),
-  async (req, res) => {
-    try {
-      const userCollection = getCollection("user");
+// Favorites API (customer)
+app.use("/api/favorites", favoriteRoutes);
 
-      const users = await userCollection
-        .find({})
-        .project({
-          name: 1,
-          email: 1,
-          role: 1,
-          image: 1,
-        })
-        .toArray();
+// Profile API (any authenticated user)
+app.use("/api/profile", profileRoutes);
 
-      res.status(200).json({
-        success: true,
-        message: "Users fetched successfully",
-        data: users,
-      });
-    } catch (error) {
-      console.error("Users fetching error:", error);
+// User management API (admin)
+app.use("/api/users", userRoutes);
+// Legacy alias so older clients keep working
+app.use("/users", userRoutes);
 
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch users",
-      });
-    }
-  }
-);
+// Admin analytics + rentals + equipment management
+app.use("/api/admin", adminRoutes);
+
+// Owner analytics
+app.use("/api/owner", ownerRoutes);
+
+// 404 handler (JSON, not HTML)
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.method} ${req.originalUrl}`,
+  });
+});
+
+// Global error handler
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+
+  res.status(err.status || 500).json({
+    success: false,
+    message:
+      err.status && err.status < 500
+        ? err.message
+        : "Internal server error",
+  });
+});
 
 // Start server
 async function startServer() {

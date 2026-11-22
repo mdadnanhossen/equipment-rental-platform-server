@@ -47,12 +47,6 @@ export async function verifyAuth(req, res, next) {
         message: "Invalid or expired session. Please login again.",
       });
     }
-    console.log("AUTH USER:", {
-  id: sessionData.user.id,
-  email: sessionData.user.email,
-  role: sessionData.user.role,
-  allFields: Object.keys(sessionData.user),
-});
 
     req.user = sessionData.user;
     req.session = sessionData.session;

@@ -10,6 +10,9 @@ const router = express.Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 router.post("/", async (req, res) => {
+  console.log("Stripe webhook request received");
+console.log("Request body is Buffer:", Buffer.isBuffer(req.body));
+console.log("Stripe signature exists:", Boolean(req.headers["stripe-signature"]));
   const signature = req.headers["stripe-signature"];
 
   let event;
@@ -21,6 +24,7 @@ router.post("/", async (req, res) => {
       signature,
       process.env.STRIPE_WEBHOOK_SECRET
     );
+    console.log("Stripe event received:", event.type);
   } catch (error) {
     console.error("Webhook signature verification failed:", error.message);
     return res.status(400).send(`Webhook Error: ${error.message}`);
@@ -31,6 +35,11 @@ router.post("/", async (req, res) => {
   }
 
   const session = event.data.object;
+
+  console.log("Checkout Session:", session.id);
+console.log("Payment Status:", session.payment_status);
+console.log("Rental ID:", session.metadata?.rentalId);
+console.log("Customer ID:", session.metadata?.customerId);
 
   try {
     if (session.payment_status !== "paid") {
