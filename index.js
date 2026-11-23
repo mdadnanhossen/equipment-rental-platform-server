@@ -26,10 +26,31 @@ import uploadsRoutes from "./routes/uploads.routes.js";
 const app = express();
 const port = process.env.PORT || 5000;
 
+/**
+ * Origins allowed to call this API directly with credentials.
+ *
+ * `CLIENT_URL` (optionally `CORS_ORIGINS`) may hold several comma-separated
+ * origins, e.g. "https://app.example.com,https://preview.example.com".
+ * Falls back to the local frontend so development keeps working out of the
+ * box. In production the browser normally reaches this API through the
+ * frontend's same-origin `/api/backend` proxy, so CORS is a safety net for
+ * deployments that call it cross-origin instead.
+ */
+function resolveAllowedOrigins() {
+  const configured = [process.env.CLIENT_URL, process.env.CORS_ORIGINS]
+    .filter(Boolean)
+    .join(",")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : ["http://localhost:3000"];
+}
+
 // CORS
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: resolveAllowedOrigins(),
     credentials: true,
   })
 );
